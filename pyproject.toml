@@ -1,6 +1,6 @@
 [project]
 name = "dashai-openrouter"
-version = "0.0.0"
+version = "0.1.0"
 description = "OpenRouter chat and RAG generation backend for DashAI"
 readme = "README.md"
 license = "MIT"
