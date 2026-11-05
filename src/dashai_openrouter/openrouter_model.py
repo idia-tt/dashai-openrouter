@@ -474,22 +474,50 @@ class OpenRouterModel(TextToTextGenerationTaskModel):
             data = response.json()
         except ValueError:
             data = {}
+        if not isinstance(data, dict):
+            data = {}
         # OpenRouter can answer 200 with only an error in the body.
-        error = data.get("error") if isinstance(data, dict) else None
+        error = data.get("error")
         if response.status_code != 200 or error or not data.get("choices"):
-            detail = (error or {}).get("message") or response.text[:200]
+            detail = error.get("message") if isinstance(error, dict) else None
+            detail = detail or response.text[:200]
             hint = _STATUS_HINTS.get(response.status_code, "unexpected response")
             raise RuntimeError(
                 f"OpenRouter error {response.status_code} for model "
                 f"'{self.model_name}': {hint}. {detail}"
             )
-        choice = data["choices"][0]
-        content = choice["message"].get("content") or ""
+        choices = data["choices"]
+        if not isinstance(choices, list) or not isinstance(choices[0], dict):
+            raise RuntimeError("OpenRouter returned invalid choices. Try again.")
+        choice = choices[0]
+        error = choice.get("error")
+        if error or choice.get("finish_reason") == "error":
+            detail = error.get("message") if isinstance(error, dict) else None
+            raise RuntimeError(
+                f"OpenRouter provider failed for model '{self.model_name}': "
+                f"{detail or 'generation interrupted'}. Try again."
+            )
+        if choice.get("finish_reason") == "content_filter":
+            raise RuntimeError(
+                f"Model '{self.model_name}' blocked the response with a content "
+                "filter. Revise the prompt or choose another model."
+            )
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            raise RuntimeError("OpenRouter returned an invalid message. Try again.")
+        content = message.get("content")
+        if content is not None and not isinstance(content, str):
+            raise RuntimeError("OpenRouter returned invalid text content. Try again.")
         if not content and choice.get("finish_reason") == "length":
             # Reasoning models spend max_tokens on thinking first.
             raise RuntimeError(
                 f"Model '{self.model_name}' hit max_tokens "
                 f"({self.body['max_tokens']}) before producing an answer. "
                 "Reasoning models need a larger max_tokens."
+            )
+        if not content or not content.strip():
+            raise RuntimeError(
+                f"Model '{self.model_name}' returned no answer. "
+                "Try again or choose another model."
             )
         return [content]

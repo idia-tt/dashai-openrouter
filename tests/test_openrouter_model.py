@@ -125,12 +125,92 @@ def test_error_inside_a_200_is_detected(server):
         OpenRouterModel(**PARAMS).generate(MESSAGES)
 
 
+@pytest.mark.parametrize("content", [None, "partial output..."])
+def test_provider_error_in_a_choice_never_returns_partial_content(server, content):
+    _, state = server
+    state["handler"] = lambda r: httpx.Response(
+        200,
+        json={
+            "choices": [
+                {
+                    "message": {"content": content},
+                    "finish_reason": "error",
+                    "error": {"code": 502, "message": "Provider disconnected"},
+                }
+            ]
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="Provider disconnected"):
+        OpenRouterModel(**PARAMS).generate(MESSAGES)
+
+
+@pytest.mark.parametrize(
+    ("finish", "text"),
+    [("error", "generation interrupted"), ("content_filter", "content filter")],
+)
+@pytest.mark.parametrize("content", [None, "partial output..."])
+def test_failed_finish_reason_is_not_treated_as_a_reply(server, finish, text, content):
+    _, state = server
+    state["handler"] = lambda r: _reply(content=content, finish=finish)
+
+    with pytest.raises(RuntimeError, match=text):
+        OpenRouterModel(**PARAMS).generate(MESSAGES)
+
+
+@pytest.mark.parametrize("content", [None, "", " \n "])
+def test_empty_answer_is_an_actionable_error(server, content):
+    _, state = server
+    state["handler"] = lambda r: _reply(content=content)
+
+    with pytest.raises(RuntimeError, match="returned no answer"):
+        OpenRouterModel(**PARAMS).generate(MESSAGES)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        [],
+        None,
+        {},
+        {"error": "upstream failed"},
+        {"choices": []},
+        {"choices": "invalid"},
+        {"choices": [None]},
+        {"choices": [{}]},
+        {"choices": [{"message": None}]},
+        {"choices": [{"message": {"content": ["invalid"]}}]},
+    ],
+)
+def test_malformed_response_raises_runtime_error(server, body):
+    _, state = server
+    state["handler"] = lambda r: httpx.Response(200, content=json.dumps(body))
+
+    with pytest.raises(RuntimeError):
+        OpenRouterModel(**PARAMS).generate(MESSAGES)
+
+
+def test_non_json_response_raises_runtime_error(server):
+    _, state = server
+    state["handler"] = lambda r: httpx.Response(502, text="Bad gateway")
+
+    with pytest.raises(RuntimeError, match="Bad gateway"):
+        OpenRouterModel(**PARAMS).generate(MESSAGES)
+
+
 def test_empty_answer_cut_by_max_tokens_explains_reasoning(server):
     _, state = server
     state["handler"] = lambda r: _reply(content=None, finish="length")
 
     with pytest.raises(RuntimeError, match="larger max_tokens"):
         OpenRouterModel(**PARAMS).generate(MESSAGES)
+
+
+def test_nonempty_answer_cut_by_max_tokens_is_preserved(server):
+    _, state = server
+    state["handler"] = lambda r: _reply(content="partial answer", finish="length")
+
+    assert OpenRouterModel(**PARAMS).generate(MESSAGES) == ["partial answer"]
 
 
 def test_unreachable_service_raises_runtime_error(server):
@@ -156,6 +236,17 @@ def test_credential_verifies_the_key_against_the_service(server):
     assert credential.verify("good") is True
     assert credential.verify("bad") is False
     assert seen[0].url == f"{openrouter_credential.API_URL}/key"
+
+
+def test_credential_verification_handles_network_failure(server):
+    _, state = server
+
+    def timeout(request):
+        raise httpx.ReadTimeout("service timed out")
+
+    state["handler"] = timeout
+
+    assert OpenRouterCredential().verify("test") is False
 
 
 def test_model_requires_the_credential():

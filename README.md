@@ -74,6 +74,20 @@ The tests run against `stubs/`, a minimal stand-in for DashAI (see `stubs/README
 Commits follow [Conventional Commits](https://www.conventionalcommits.org); merging to `main`
 bumps the version and tags it, as in `dashai-ollama`.
 
+## Releases
+
+After merging to `main`, CI runs the checks, bumps the version from the conventional
+commits, builds the distributions, creates a GitHub release and publishes to PyPI.
+Changes limited to docs, tests or CI do not trigger a release.
+If the upload fails, re-run the failed `Publish to PyPI` job in Actions; it reuses the
+release artifacts without creating another version.
+
+Before the first publication, configure the repository Actions secret `PYPI_API_TOKEN`
+with a PyPI API token authorized to publish `dashai-openrouter`. The local `PYPI_AK`
+credential lives in the parent workspace's `.env`; CI reads only the Actions secret.
+The initial token needs account-wide scope to create the project; replace it with a
+project-scoped token after the first publication. Never commit a token.
+
 ## License
 
 MIT

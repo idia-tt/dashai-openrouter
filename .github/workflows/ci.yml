@@ -128,6 +128,8 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [lint, typecheck, test, min-deps, build]
     runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.bump.outputs.released }}
     permissions:
       contents: write
     concurrency:
@@ -163,6 +165,13 @@ jobs:
       - name: Build the distributions
         if: steps.bump.outputs.released == 'true'
         run: uv build
+      - name: Upload release distributions
+        if: steps.bump.outputs.released == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-dist
+          path: dist/
+          retention-days: 7
       - name: Create the GitHub release
         if: steps.bump.outputs.released == 'true'
         env:
@@ -171,3 +180,19 @@ jobs:
         run: |
           uvx --from commitizen cz changelog "${TAG#v}" --dry-run > notes.md
           gh release create "$TAG" dist/* --title "$TAG" --notes-file notes.md
+
+  publish:
+    name: Publish to PyPI
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-dist
+          path: dist/
+      - name: Publish the release distributions
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: uv publish --trusted-publishing never
